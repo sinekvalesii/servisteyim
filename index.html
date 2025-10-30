@@ -1,0 +1,1028 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#4F46E5">
+    <meta name="description" content="Servisteyim - Araç sahipleri ve sürücüleri buluşturan platform">
+    <title>Servisteyim</title>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .line-clamp-3 {
+            display: -webkit-box;
+            -webkit-line-clamp: 3;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .animate-spin {
+            animation: spin 1s linear infinite;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        // ==================== DATABASE ====================
+        class BoltDB {
+            constructor() {
+                this.dbName = 'servisteyim-db';
+                this.version = 1;
+                this.db = null;
+            }
+
+            async init() {
+                return new Promise((resolve, reject) => {
+                    const request = indexedDB.open(this.dbName, this.version);
+                    request.onerror = () => reject(request.error);
+                    request.onsuccess = () => {
+                        this.db = request.result;
+                        resolve();
+                    };
+                    request.onupgradeneeded = (event) => {
+                        const db = event.target.result;
+                        if (!db.objectStoreNames.contains('users')) {
+                            const userStore = db.createObjectStore('users', { keyPath: 'id' });
+                            userStore.createIndex('phoneOrEmail', 'phoneOrEmail', { unique: true });
+                        }
+                        if (!db.objectStoreNames.contains('job_posts')) {
+                            const jobStore = db.createObjectStore('job_posts', { keyPath: 'id' });
+                            jobStore.createIndex('userId', 'userId', { unique: false });
+                            jobStore.createIndex('category', 'category', { unique: false });
+                            jobStore.createIndex('createdAt', 'createdAt', { unique: false });
+                        }
+                    };
+                });
+            }
+
+            async addUser(user) {
+                if (!this.db) throw new Error('DB not initialized');
+                return new Promise((resolve, reject) => {
+                    const transaction = this.db.transaction(['users'], 'readwrite');
+                    const store = transaction.objectStore('users');
+                    const request = store.add(user);
+                    request.onsuccess = () => resolve();
+                    request.onerror = () => reject(request.error);
+                });
+            }
+
+            async getUserByPhoneOrEmail(phoneOrEmail) {
+                if (!this.db) throw new Error('DB not initialized');
+                return new Promise((resolve, reject) => {
+                    const transaction = this.db.transaction(['users'], 'readonly');
+                    const store = transaction.objectStore('users');
+                    const index = store.index('phoneOrEmail');
+                    const request = index.get(phoneOrEmail);
+                    request.onsuccess = () => resolve(request.result || null);
+                    request.onerror = () => reject(request.error);
+                });
+            }
+
+            async addJobPost(post) {
+                if (!this.db) throw new Error('DB not initialized');
+                return new Promise((resolve, reject) => {
+                    const transaction = this.db.transaction(['job_posts'], 'readwrite');
+                    const store = transaction.objectStore('job_posts');
+                    const request = store.add(post);
+                    request.onsuccess = () => resolve();
+                    request.onerror = () => reject(request.error);
+                });
+            }
+
+            async getAllJobPosts() {
+                if (!this.db) throw new Error('DB not initialized');
+                return new Promise((resolve, reject) => {
+                    const transaction = this.db.transaction(['job_posts'], 'readonly');
+                    const store = transaction.objectStore('job_posts');
+                    const request = store.getAll();
+                    request.onsuccess = () => resolve(request.result);
+                    request.onerror = () => reject(request.error);
+                });
+            }
+
+            async updateJobPost(post) {
+                if (!this.db) throw new Error('DB not initialized');
+                return new Promise((resolve, reject) => {
+                    const transaction = this.db.transaction(['job_posts'], 'readwrite');
+                    const store = transaction.objectStore('job_posts');
+                    const request = store.put(post);
+                    request.onsuccess = () => resolve();
+                    request.onerror = () => reject(request.error);
+                });
+            }
+
+            async deleteJobPost(postId) {
+                if (!this.db) throw new Error('DB not initialized');
+                return new Promise((resolve, reject) => {
+                    const transaction = this.db.transaction(['job_posts'], 'readwrite');
+                    const store = transaction.objectStore('job_posts');
+                    const request = store.delete(postId);
+                    request.onsuccess = () => resolve();
+                    request.onerror = () => reject(request.error);
+                });
+            }
+
+            async updateUser(user) {
+                if (!this.db) throw new Error('DB not initialized');
+                return new Promise((resolve, reject) => {
+                    const transaction = this.db.transaction(['users'], 'readwrite');
+                    const store = transaction.objectStore('users');
+                    const request = store.put(user);
+                    request.onsuccess = () => resolve();
+                    request.onerror = () => reject(request.error);
+                });
+            }
+        }
+
+        const db = new BoltDB();
+
+        // ==================== ICONS ====================
+        const HomeIcon = () => <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" /></svg>;
+        const PlusIcon = () => <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v3m0 0v3m0-3h3m-3 0H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>;
+        const InfoIcon = () => <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>;
+
+        // ==================== AUTH PANEL ====================
+        function AuthPanel({ onLogin }) {
+            const [isLogin, setIsLogin] = useState(true);
+            const [phoneOrEmail, setPhoneOrEmail] = useState('');
+            const [password, setPassword] = useState('');
+            const [name, setName] = useState('');
+            const [surname, setSurname] = useState('');
+            const [profilePhoto, setProfilePhoto] = useState('');
+            const [role, setRole] = useState('arac-sahibi');
+            const [error, setError] = useState('');
+            const [loading, setLoading] = useState(false);
+
+            const handlePhotoUpload = (e) => {
+                const file = e.target.files?.[0];
+                if (file) {
+                    if (file.size > 2 * 1024 * 1024) {
+                        setError('Fotoğraf boyutu 2MB\'dan küçük olmalıdır!');
+                        return;
+                    }
+                    const reader = new FileReader();
+                    reader.onloadend = () => {
+                        setProfilePhoto(reader.result);
+                    };
+                    reader.readAsDataURL(file);
+                }
+            };
+
+            const handleSubmit = async () => {
+                if (!phoneOrEmail || !password) {
+                    setError('Lütfen tüm alanları doldurun!');
+                    return;
+                }
+                if (!isLogin && (!name || !surname)) {
+                    setError('Lütfen ad ve soyad alanlarını doldurun!');
+                    return;
+                }
+                setError('');
+                setLoading(true);
+
+                try {
+                    if (isLogin) {
+                        const user = await db.getUserByPhoneOrEmail(phoneOrEmail);
+                        if (!user) {
+                            setError('Kullanıcı bulunamadı!');
+                            setLoading(false);
+                            return;
+                        }
+                        if (user.password !== password) {
+                            setError('Şifre yanlış!');
+                            setLoading(false);
+                            return;
+                        }
+                        onLogin(user);
+                    } else {
+                        const existingUser = await db.getUserByPhoneOrEmail(phoneOrEmail);
+                        if (existingUser) {
+                            setError('Bu telefon/e-posta zaten kayıtlı!');
+                            setLoading(false);
+                            return;
+                        }
+                        const newUser = {
+                            id: `user_${Date.now()}`,
+                            phoneOrEmail,
+                            password,
+                            name,
+                            surname,
+                            profilePhoto: profilePhoto || undefined,
+                            role,
+                            createdAt: Date.now()
+                        };
+                        await db.addUser(newUser);
+                        onLogin(newUser);
+                    }
+                } catch (err) {
+                    setError('Bir hata oluştu: ' + err.message);
+                    setLoading(false);
+                }
+            };
+
+            return (
+                <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-md">
+                        <h1 className="text-3xl font-bold text-indigo-600 mb-2 text-center">Servisteyim</h1>
+                        <p className="text-gray-600 text-center mb-8">Servis dünyasına hoş geldiniz!</p>
+
+                        <div className="flex gap-2 mb-6">
+                            <button onClick={() => setIsLogin(true)} className={`flex-1 py-2 rounded-lg font-medium transition-colors ${isLogin ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-600'}`}>Giriş Yap</button>
+                            <button onClick={() => setIsLogin(false)} className={`flex-1 py-2 rounded-lg font-medium transition-colors ${!isLogin ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-600'}`}>Kayıt Ol</button>
+                        </div>
+
+                        <div className="space-y-4">
+                            {!isLogin && (
+                                <>
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-2">Profil Fotoğrafı (İsteğe Bağlı)</label>
+                                        <div className="flex items-center gap-4">
+                                            {profilePhoto ? (
+                                                <div className="relative">
+                                                    <img src={profilePhoto} alt="Profil" className="w-20 h-20 rounded-full object-cover border-4 border-indigo-100" />
+                                                    <button type="button" onClick={() => setProfilePhoto('')} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center hover:bg-red-600">✕</button>
+                                                </div>
+                                            ) : (
+                                                <div className="w-20 h-20 rounded-full bg-gray-200 flex items-center justify-center"><span className="text-3xl text-gray-400">👤</span></div>
+                                            )}
+                                            <label className="cursor-pointer bg-indigo-100 text-indigo-700 px-4 py-2 rounded-lg font-medium hover:bg-indigo-200">
+                                                📷 Fotoğraf Seç
+                                                <input type="file" accept="image/*" onChange={handlePhotoUpload} className="hidden" />
+                                            </label>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-2">İsim *</label>
+                                        <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Adınız" className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500" />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-2">Soyisim *</label>
+                                        <input type="text" value={surname} onChange={(e) => setSurname(e.target.value)} placeholder="Soyadınız" className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500" />
+                                    </div>
+                                </>
+                            )}
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">Telefon veya E-posta</label>
+                                <input type="text" value={phoneOrEmail} onChange={(e) => setPhoneOrEmail(e.target.value)} placeholder="5xxxxxxxxx veya email@ornek.com" className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500" />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">Şifre</label>
+                                <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500" />
+                            </div>
+                            {!isLogin && (
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-3">Rolünüz</label>
+                                    <div className="space-y-2">
+                                        <label className="flex items-center p-3 border border-gray-300 rounded-lg cursor-pointer hover:bg-indigo-50">
+                                            <input type="radio" name="role" value="arac-sahibi" checked={role === 'arac-sahibi'} onChange={(e) => setRole(e.target.value)} className="w-4 h-4 text-indigo-600" />
+                                            <span className="ml-3 font-medium text-gray-700">🚗 Araç Sahibiyim</span>
+                                        </label>
+                                        <label className="flex items-center p-3 border border-gray-300 rounded-lg cursor-pointer hover:bg-indigo-50">
+                                            <input type="radio" name="role" value="surucu" checked={role === 'surucu'} onChange={(e) => setRole(e.target.value)} className="w-4 h-4 text-indigo-600" />
+                                            <span className="ml-3 font-medium text-gray-700">👨‍✈️ Sürücüyüm</span>
+                                        </label>
+                                    </div>
+                                </div>
+                            )}
+                            {error && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">{error}</div>}
+                            <button type="button" onClick={handleSubmit} disabled={loading} className="w-full bg-indigo-600 text-white py-3 rounded-lg font-medium hover:bg-indigo-700 disabled:opacity-50">
+                                {loading ? 'Lütfen bekleyin...' : isLogin ? 'Giriş Yap' : 'Kayıt Ol'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // ==================== FUEL PRICES ====================
+        function FuelPrices() {
+            const [prices, setPrices] = useState(null);
+            const [loading, setLoading] = useState(true);
+            const [lastUpdate, setLastUpdate] = useState(null);
+
+            const fetchFuelPrices = async () => {
+                try {
+                    // Gerçek API yerine simülasyon - İnternet varsa güncelle
+                    if (navigator.onLine) {
+                        // API'den veri çekme simülasyonu
+                        const response = await fetch('https://api.example.com/fuel-prices').catch(() => null);
+                        
+                        // Simüle edilmiş fiyatlar (gerçek API entegrasyonu için burası değişecek)
+                        const randomVariation = () => (Math.random() * 2 - 1).toFixed(2);
+                        const newPrices = {
+                            motorin: (44.67 + parseFloat(randomVariation())).toFixed(2),
+                            benzin: (43.25 + parseFloat(randomVariation())).toFixed(2),
+                            lpg: (24.18 + parseFloat(randomVariation())).toFixed(2)
+                        };
+                        
+                        setPrices(newPrices);
+                        setLastUpdate(new Date().toLocaleTimeString('tr-TR'));
+                        
+                        // LocalStorage'a kaydet
+                        localStorage.setItem('fuelPrices', JSON.stringify(newPrices));
+                        localStorage.setItem('fuelPricesTime', new Date().toISOString());
+                    } else {
+                        // Offline ise localStorage'dan oku
+                        const saved = localStorage.getItem('fuelPrices');
+                        const savedTime = localStorage.getItem('fuelPricesTime');
+                        if (saved) {
+                            setPrices(JSON.parse(saved));
+                            setLastUpdate(new Date(savedTime).toLocaleTimeString('tr-TR'));
+                        } else {
+                            setPrices({ motorin: '44.67', benzin: '43.25', lpg: '24.18' });
+                        }
+                    }
+                } catch (error) {
+                    console.error('Yakıt fiyatları alınamadı:', error);
+                    setPrices({ motorin: '44.67', benzin: '43.25', lpg: '24.18' });
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            useEffect(() => {
+                fetchFuelPrices();
+                
+                // Her 5 dakikada bir güncelle
+                const interval = setInterval(fetchFuelPrices, 5 * 60 * 1000);
+                
+                // İnternet durumu değiştiğinde güncelle
+                window.addEventListener('online', fetchFuelPrices);
+                
+                return () => {
+                    clearInterval(interval);
+                    window.removeEventListener('online', fetchFuelPrices);
+                };
+            }, []);
+
+            if (loading) {
+                return (
+                    <div className="bg-white rounded-lg shadow-md p-6 mb-6">
+                        <div className="animate-pulse space-y-3">
+                            <div className="h-4 bg-gray-200 rounded w-1/2"></div>
+                            <div className="h-8 bg-gray-200 rounded"></div>
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="bg-gradient-to-br from-indigo-500 to-purple-600 rounded-lg shadow-lg p-6 mb-6 text-white">
+                    <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+                        ⛽ İstanbul Yakıt Fiyatları
+                        <span className="text-xs bg-white/20 px-2 py-1 rounded">
+                            {navigator.onLine ? '🟢 Canlı' : '🔴 Offline'}
+                        </span>
+                    </h3>
+                    <div className="grid grid-cols-3 gap-3">
+                        <div className="bg-white/10 backdrop-blur-sm rounded-lg p-3 text-center">
+                            <div className="text-2xl mb-1">🚗</div>
+                            <div className="text-xs opacity-80 mb-1">Benzin</div>
+                            <div className="text-xl font-bold">{prices?.benzin} ₺</div>
+                        </div>
+                        <div className="bg-white/10 backdrop-blur-sm rounded-lg p-3 text-center">
+                            <div className="text-2xl mb-1">🚚</div>
+                            <div className="text-xs opacity-80 mb-1">Motorin</div>
+                            <div className="text-xl font-bold">{prices?.motorin} ₺</div>
+                        </div>
+                        <div className="bg-white/10 backdrop-blur-sm rounded-lg p-3 text-center">
+                            <div className="text-2xl mb-1">⚡</div>
+                            <div className="text-xs opacity-80 mb-1">LPG</div>
+                            <div className="text-xl font-bold">{prices?.lpg} ₺</div>
+                        </div>
+                    </div>
+                    <p className="text-xs opacity-70 mt-3 text-center">
+                        Fiyatlar litre başınadır {lastUpdate && `• Son güncelleme: ${lastUpdate}`}
+                    </p>
+                </div>
+            );
+        }
+
+        // ==================== LOCATION PICKER ====================
+        function LocationPicker({ onLocationSelect, selectedLocation }) {
+            const [mode, setMode] = useState('gps');
+            const [loading, setLoading] = useState(false);
+            const [error, setError] = useState('');
+            const [manualAddress, setManualAddress] = useState('');
+            const [manualLat, setManualLat] = useState('');
+            const [manualLng, setManualLng] = useState('');
+
+            const getCurrentLocation = () => {
+                setLoading(true);
+                setError('');
+                if (!navigator.geolocation) {
+                    setError('Tarayıcınız konum hizmetlerini desteklemiyor.');
+                    setLoading(false);
+                    return;
+                }
+                navigator.geolocation.getCurrentPosition(
+                    (position) => {
+                        const lat = position.coords.latitude;
+                        const lng = position.coords.longitude;
+                        const address = `İstanbul, Türkiye (${lat.toFixed(4)}, ${lng.toFixed(4)})`;
+                        onLocationSelect({ lat, lng, address });
+                        setLoading(false);
+                    },
+                    () => {
+                        setError('Konum alınamadı. Lütfen konum iznini kontrol edin.');
+                        setLoading(false);
+                    },
+                    { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+                );
+            };
+
+            const handleManualSubmit = () => {
+                if (!manualLat || !manualLng) {
+                    setError('Lütfen enlem ve boylam değerlerini girin.');
+                    return;
+                }
+                const lat = parseFloat(manualLat);
+                const lng = parseFloat(manualLng);
+                if (isNaN(lat) || isNaN(lng)) {
+                    setError('Geçersiz koordinat değerleri.');
+                    return;
+                }
+                onLocationSelect({ lat, lng, address: manualAddress || `Manuel Konum (${lat.toFixed(4)}, ${lng.toFixed(4)})` });
+                setError('');
+            };
+
+            return (
+                <div className="space-y-4">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Konum Bilgisi *</label>
+                    <div className="flex gap-2 mb-4">
+                        <button type="button" onClick={() => setMode('gps')} className={`flex-1 py-2 px-4 rounded-lg font-medium ${mode === 'gps' ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-600'}`}>📍 GPS Konumum</button>
+                        <button type="button" onClick={() => setMode('manual')} className={`flex-1 py-2 px-4 rounded-lg font-medium ${mode === 'manual' ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-600'}`}>🗺️ Manuel Seç</button>
+                    </div>
+                    {mode === 'gps' && (
+                        <div className="space-y-3">
+                            <button type="button" onClick={getCurrentLocation} disabled={loading} className="w-full bg-green-600 text-white py-3 rounded-lg font-medium hover:bg-green-700 disabled:opacity-50">
+                                {loading ? 'Konum Alınıyor...' : '📍 Mevcut Konumumu Al'}
+                            </button>
+                            {selectedLocation && (
+                                <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                                    <p className="text-sm font-medium text-green-800 mb-1">✅ Konum Seçildi</p>
+                                    <p className="text-xs text-green-700">{selectedLocation.address}</p>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                    {mode === 'manual' && (
+                        <div className="space-y-3">
+                            <input type="text" value={manualAddress} onChange={(e) => setManualAddress(e.target.value)} placeholder="Adres (isteğe bağlı)" className="w-full px-4 py-2 border border-gray-300 rounded-lg" />
+                            <div className="grid grid-cols-2 gap-3">
+                                <input type="text" value={manualLat} onChange={(e) => setManualLat(e.target.value)} placeholder="Enlem" className="w-full px-4 py-2 border border-gray-300 rounded-lg" />
+                                <input type="text" value={manualLng} onChange={(e) => setManualLng(e.target.value)} placeholder="Boylam" className="w-full px-4 py-2 border border-gray-300 rounded-lg" />
+                            </div>
+                            <button type="button" onClick={handleManualSubmit} className="w-full bg-indigo-600 text-white py-3 rounded-lg font-medium hover:bg-indigo-700">✓ Konumu Kaydet</button>
+                            {selectedLocation && (
+                                <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
+                                    <p className="text-sm font-medium text-indigo-800 mb-1">✅ Konum Seçildi</p>
+                                    <p className="text-xs text-indigo-700">{selectedLocation.address}</p>
+                                </div>
+                            )}
+                            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                                <p className="text-xs text-blue-700">💡 İstanbul örnek koordinatlar:<br />• Taksim: 41.0370, 28.9850<br />• Kadıköy: 40.9833, 29.0333</p>
+                            </div>
+                        </div>
+                    )}
+                    {error && <div className="bg-red-50 border border-red-200 rounded-lg p-3"><p className="text-sm text-red-700">{error}</p></div>}
+                </div>
+            );
+        }
+
+        // ==================== JOB POST FORM ====================
+        function JobPostForm({ currentUser, onPostCreated, editingPost, onCancelEdit }) {
+            const [category, setCategory] = useState(editingPost?.category || (currentUser.role === 'arac-sahibi' ? 'surucu-ariyorum' : 'is-ariyorum'));
+            const [title, setTitle] = useState(editingPost?.title || '');
+            const [description, setDescription] = useState(editingPost?.description || '');
+            const [contact, setContact] = useState(editingPost?.contact || currentUser.phoneOrEmail);
+            const [location, setLocation] = useState(editingPost?.location || null);
+            const [loading, setLoading] = useState(false);
+            const [success, setSuccess] = useState(false);
+
+            const handleSubmit = async () => {
+                if (!title || !description || !contact || !location) {
+                    alert('❗ Lütfen bilgileri doldurun');
+                    return;
+                }
+                setLoading(true);
+                try {
+                    if (editingPost) {
+                        const updatedPost = { ...editingPost, title, description, contact, location, category, editedAt: Date.now() };
+                        await db.updateJobPost(updatedPost);
+                    } else {
+                        const newPost = { id: `post_${Date.now()}`, userId: currentUser.id, title, description, contact, location, category, createdAt: Date.now() };
+                        await db.addJobPost(newPost);
+                    }
+                    setSuccess(true);
+                    setLoading(false);
+                    setTimeout(() => {
+                        setSuccess(false);
+                        setTitle('');
+                        setDescription('');
+                        setLocation(null);
+                        onPostCreated();
+                    }, 2000);
+                } catch (error) {
+                    alert('İlan kaydedilemedi: ' + error.message);
+                    setLoading(false);
+                }
+            };
+
+            const categories = currentUser.role === 'arac-sahibi' 
+                ? [{ value: 'surucu-ariyorum', label: '👨‍✈️ Sürücü Arıyorum', icon: '👨‍✈️' }]
+                : [{ value: 'is-ariyorum', label: '💼 İş Arıyorum', icon: '💼' }];
+
+            return (
+                <div className="max-w-2xl mx-auto">
+                    <div className="bg-white rounded-lg shadow-md p-6">
+                        <div className="flex items-center justify-between mb-6">
+                            <h2 className="text-2xl font-bold text-gray-800">{editingPost ? 'İlanı Düzenle' : 'Yeni İlan Oluştur'}</h2>
+                            {editingPost && onCancelEdit && <button type="button" onClick={onCancelEdit} className="text-gray-500 hover:text-gray-700">✕ İptal</button>}
+                        </div>
+                        {success ? (
+                            <div className="bg-green-50 border border-green-200 rounded-lg p-8 text-center">
+                                <div className="text-6xl mb-4">✅</div>
+                                <h3 className="text-xl font-bold text-green-800 mb-2">{editingPost ? 'İlan Başarıyla Güncellendi!' : 'İlan Başarıyla Oluşturuldu!'}</h3>
+                            </div>
+                        ) : (
+                            <div className="space-y-6">
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-3">İlan Kategorisi</label>
+                                    <div className="grid grid-cols-1 gap-3">
+                                        {categories.map((cat) => (
+                                            <label key={cat.value} className={`flex items-center p-4 border-2 rounded-lg cursor-pointer ${category === cat.value ? 'border-indigo-600 bg-indigo-50' : 'border-gray-300'}`}>
+                                                <input type="radio" name="category" value={cat.value} checked={category === cat.value} onChange={(e) => setCategory(e.target.value)} className="w-5 h-5 text-indigo-600" />
+                                                <span className="ml-3 text-lg">{cat.icon}</span>
+                                                <span className="ml-2 font-medium text-gray-700">{cat.label}</span>
+                                            </label>
+                                        ))}
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">İlan Başlığı *</label>
+                                    <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} placeholder={category === 'surucu-ariyorum' ? 'Örn: Deneyimli servis şoförü aranıyor' : 'Örn: B sınıfı ehliyetli deneyimli şoför iş arıyor'} className="w-full px-4 py-3 border border-gray-300 rounded-lg" />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">Detaylı Açıklama *</label>
+                                    <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder={category === 'surucu-ariyorum' ? 'İlan detaylarını yazın (çalışma saatleri, maaş, gereklilikler vb.)' : 'Kendinizi tanıtın (deneyim, ehliyet sınıfı, çalışma tercihleri vb.)'} rows={6} className="w-full px-4 py-3 border border-gray-300 rounded-lg resize-none" />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">İletişim Bilgisi *</label>
+                                    <input type="text" value={contact} onChange={(e) => setContact(e.target.value)} placeholder="Telefon veya e-posta" className="w-full px-4 py-3 border border-gray-300 rounded-lg" />
+                                </div>
+                                <LocationPicker onLocationSelect={setLocation} selectedLocation={location} />
+                                <button onClick={handleSubmit} disabled={loading || !title || !description || !contact || !location} className="w-full bg-indigo-600 text-white py-4 rounded-lg font-medium hover:bg-indigo-700 disabled:opacity-50">
+                                    {loading ? (editingPost ? 'Güncelleniyor...' : 'İlan Oluşturuluyor...') : (editingPost ? 'Güncelle' : 'İlanı Yayınla')}
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        }
+
+        // ==================== JOB POSTS LIST ====================
+        function JobPostsList({ currentUser, onEditPost }) {
+            const [posts, setPosts] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [filter, setFilter] = useState('all');
+            const [nearbyOnly, setNearbyOnly] = useState(false);
+            const [userLocation, setUserLocation] = useState(null);
+
+            useEffect(() => {
+                loadPosts();
+            }, []);
+
+            const loadPosts = async () => {
+                try {
+                    const allPosts = await db.getAllJobPosts();
+                    setPosts(allPosts.sort((a, b) => b.createdAt - a.createdAt));
+                    setLoading(false);
+                } catch (error) {
+                    console.error('İlanlar yüklenemedi:', error);
+                    setLoading(false);
+                }
+            };
+
+            const handleDeletePost = async (postId) => {
+                const confirmed = window.confirm('Bu ilanı silmek istediğinizden emin misiniz?');
+                if (!confirmed) return;
+                try {
+                    await db.deleteJobPost(postId);
+                    setPosts(posts.filter(p => p.id !== postId));
+                    alert('İlan başarıyla silindi!');
+                } catch (error) {
+                    alert('İlan silinemedi: ' + error.message);
+                }
+            };
+
+            const getUserLocation = () => {
+                if (navigator.geolocation) {
+                    navigator.geolocation.getCurrentPosition(
+                        (position) => {
+                            setUserLocation({ lat: position.coords.latitude, lng: position.coords.longitude });
+                            setNearbyOnly(true);
+                        },
+                        () => alert('Konum alınamadı.')
+                    );
+                }
+            };
+
+            const calculateDistance = (lat1, lon1, lat2, lon2) => {
+                const R = 6371;
+                const dLat = (lat2 - lat1) * Math.PI / 180;
+                const dLon = (lon2 - lon1) * Math.PI / 180;
+                const a = Math.sin(dLat/2) * Math.sin(dLat/2) + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon/2) * Math.sin(dLon/2);
+                const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+                return R * c;
+            };
+
+            const filteredPosts = posts.filter(post => {
+                if (filter !== 'all' && post.category !== filter) return false;
+                if (nearbyOnly && userLocation) {
+                    const distance = calculateDistance(userLocation.lat, userLocation.lng, post.location.lat, post.location.lng);
+                    return distance <= 10;
+                }
+                return true;
+            });
+
+            const getCategoryIcon = (category) => category === 'surucu-ariyorum' ? '👨‍✈️' : '💼';
+            const getCategoryLabel = (category) => category === 'surucu-ariyorum' ? 'Sürücü Arıyorum' : 'İş Arıyorum';
+            const getTimeAgo = (timestamp) => {
+                const seconds = Math.floor((Date.now() - timestamp) / 1000);
+                if (seconds < 60) return 'Az önce';
+                const minutes = Math.floor(seconds / 60);
+                if (minutes < 60) return `${minutes} dakika önce`;
+                const hours = Math.floor(minutes / 60);
+                if (hours < 24) return `${hours} saat önce`;
+                const days = Math.floor(hours / 24);
+                return `${days} gün önce`;
+            };
+
+            if (loading) {
+                return (
+                    <div className="space-y-4">
+                        {[1, 2, 3].map(i => (
+                            <div key={i} className="bg-white rounded-lg shadow-md p-6 animate-pulse">
+                                <div className="h-4 bg-gray-200 rounded w-3/4 mb-3"></div>
+                                <div className="h-3 bg-gray-200 rounded w-full mb-2"></div>
+                            </div>
+                        ))}
+                    </div>
+                );
+            }
+
+            return (
+                <div className="space-y-4">
+                    <div className="bg-white rounded-lg shadow-md p-4">
+                        <h3 className="font-bold text-gray-800 mb-3">Filtrele</h3>
+                        <div className="grid grid-cols-3 gap-2 mb-3">
+                            <button onClick={() => setFilter('all')} className={`py-2 px-3 rounded-lg text-sm font-medium ${filter === 'all' ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-700'}`}>📋 Tümü</button>
+                            <button onClick={() => setFilter('surucu-ariyorum')} className={`py-2 px-3 rounded-lg text-sm font-medium ${filter === 'surucu-ariyorum' ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-700'}`}>👨‍✈️ Sürücü</button>
+                            <button onClick={() => setFilter('is-ariyorum')} className={`py-2 px-3 rounded-lg text-sm font-medium ${filter === 'is-ariyorum' ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-700'}`}>💼 İş</button>
+                        </div>
+                        <button onClick={() => nearbyOnly ? setNearbyOnly(false) : getUserLocation()} className={`w-full py-2 px-4 rounded-lg text-sm font-medium ${nearbyOnly ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-700'}`}>
+                            {nearbyOnly ? '✓ Yakınımdaki İlanlar (10km)' : '📍 Yakınımdaki İlanları Göster'}
+                        </button>
+                        <p className="text-xs text-gray-500 mt-2 text-center">{filteredPosts.length} ilan bulundu</p>
+                    </div>
+
+                    {filteredPosts.length === 0 ? (
+                        <div className="bg-white rounded-lg shadow-md p-12 text-center">
+                            <div className="text-6xl mb-4">🔍</div>
+                            <h3 className="text-xl font-bold text-gray-800 mb-2">İlan Bulunamadı</h3>
+                            <p className="text-gray-600">{nearbyOnly ? 'Yakınınızda ilan bulunmuyor.' : 'Henüz ilan yok. İlk ilanı siz oluşturun!'}</p>
+                        </div>
+                    ) : (
+                        filteredPosts.map(post => {
+                            const distance = nearbyOnly && userLocation ? calculateDistance(userLocation.lat, userLocation.lng, post.location.lat, post.location.lng) : null;
+                            return (
+                                <div key={post.id} className="bg-white rounded-lg shadow-md hover:shadow-lg transition-shadow">
+                                    <div className="p-5">
+                                        <div className="flex items-start justify-between mb-3">
+                                            <div className="flex-1">
+                                                <div className="flex items-center gap-2 mb-2 flex-wrap">
+                                                    <span className="text-2xl">{getCategoryIcon(post.category)}</span>
+                                                    <span className="text-xs font-medium px-2 py-1 bg-indigo-100 text-indigo-700 rounded">{getCategoryLabel(post.category)}</span>
+                                                    {distance !== null && <span className="text-xs font-medium px-2 py-1 bg-green-100 text-green-700 rounded">📍 {distance.toFixed(1)} km</span>}
+                                                    {post.editedAt && <span className="text-xs font-medium px-2 py-1 bg-yellow-100 text-yellow-700 rounded">✏️ Düzenlendi</span>}
+                                                </div>
+                                                <h3 className="text-lg font-bold text-gray-800">{post.title}</h3>
+                                            </div>
+                                        </div>
+                                        <p className="text-gray-600 text-sm mb-4 line-clamp-3">{post.description}</p>
+                                        <div className="flex items-center gap-2 text-sm text-gray-500 mb-3">
+                                            <span>📍</span>
+                                            <span className="truncate">{post.location.address}</span>
+                                        </div>
+                                        <div className="flex items-center justify-between pt-3 border-t border-gray-100">
+                                            <span className="text-xs text-gray-500">{getTimeAgo(post.createdAt)}</span>
+                                            <div className="flex gap-2">
+                                                {post.userId === currentUser.id && (
+                                                    <>
+                                                        <button type="button" onClick={() => onEditPost(post)} className="bg-blue-600 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-blue-700">✏️ Düzenle</button>
+                                                        <button type="button" onClick={() => handleDeletePost(post.id)} className="bg-red-600 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-red-700">🗑️ Sil</button>
+                                                    </>
+                                                )}
+                                                <button type="button" onClick={() => alert(`📞 İletişim:\n${post.contact}`)} className="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700">📞 İletişim</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            );
+                        })
+                    )}
+                </div>
+            );
+        }
+
+        // ==================== PROFILE EDIT MODAL ====================
+        function ProfileEditModal({ currentUser, onClose, onUpdate }) {
+            const [name, setName] = useState(currentUser.name);
+            const [surname, setSurname] = useState(currentUser.surname);
+            const [phoneOrEmail, setPhoneOrEmail] = useState(currentUser.phoneOrEmail);
+            const [profilePhoto, setProfilePhoto] = useState(currentUser.profilePhoto || '');
+            const [loading, setLoading] = useState(false);
+            const [error, setError] = useState('');
+
+            const handlePhotoUpload = (e) => {
+                const file = e.target.files?.[0];
+                if (file) {
+                    if (file.size > 2 * 1024 * 1024) {
+                        setError('Fotoğraf boyutu 2MB\'dan küçük olmalıdır!');
+                        return;
+                    }
+                    const reader = new FileReader();
+                    reader.onloadend = () => {
+                        setProfilePhoto(reader.result);
+                    };
+                    reader.readAsDataURL(file);
+                }
+            };
+
+            const handleSubmit = async () => {
+                if (!name || !surname || !phoneOrEmail) {
+                    setError('Lütfen tüm alanları doldurun!');
+                    return;
+                }
+
+                setLoading(true);
+                setError('');
+
+                try {
+                    const updatedUser = {
+                        ...currentUser,
+                        name,
+                        surname,
+                        phoneOrEmail,
+                        profilePhoto: profilePhoto || undefined
+                    };
+
+                    await db.updateUser(updatedUser);
+                    onUpdate(updatedUser);
+                    alert('✅ Profil başarıyla güncellendi!');
+                    onClose();
+                } catch (err) {
+                    setError('Profil güncellenemedi: ' + err.message);
+                    setLoading(false);
+                }
+            };
+
+            return (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto">
+                        <div className="sticky top-0 bg-white border-b border-gray-200 p-4 flex items-center justify-between">
+                            <h2 className="text-xl font-bold text-gray-800">👤 Profili Düzenle</h2>
+                            <button onClick={onClose} className="text-gray-500 hover:text-gray-700 text-2xl">✕</button>
+                        </div>
+
+                        <div className="p-6 space-y-4">
+                            {/* Profil Fotoğrafı */}
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">Profil Fotoğrafı</label>
+                                <div className="flex items-center gap-4">
+                                    {profilePhoto ? (
+                                        <div className="relative">
+                                            <img src={profilePhoto} alt="Profil" className="w-24 h-24 rounded-full object-cover border-4 border-indigo-100" />
+                                            <button type="button" onClick={() => setProfilePhoto('')} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center hover:bg-red-600">✕</button>
+                                        </div>
+                                    ) : (
+                                        <div className="w-24 h-24 rounded-full bg-gray-200 flex items-center justify-center">
+                                            <span className="text-4xl text-gray-400">👤</span>
+                                        </div>
+                                    )}
+                                    <label className="cursor-pointer bg-indigo-100 text-indigo-700 px-4 py-2 rounded-lg font-medium hover:bg-indigo-200">
+                                        📷 Değiştir
+                                        <input type="file" accept="image/*" onChange={handlePhotoUpload} className="hidden" />
+                                    </label>
+                                </div>
+                            </div>
+
+                            {/* İsim */}
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">İsim *</label>
+                                <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Adınız" className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500" />
+                            </div>
+
+                            {/* Soyisim */}
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">Soyisim *</label>
+                                <input type="text" value={surname} onChange={(e) => setSurname(e.target.value)} placeholder="Soyadınız" className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500" />
+                            </div>
+
+                            {/* İletişim */}
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">İletişim Bilgisi *</label>
+                                <input type="text" value={phoneOrEmail} onChange={(e) => setPhoneOrEmail(e.target.value)} placeholder="Telefon veya e-posta" className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500" />
+                            </div>
+
+                            {/* Rol (Sadece gösterim) */}
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">Rolünüz</label>
+                                <div className="bg-gray-100 px-4 py-3 rounded-lg">
+                                    <span className="font-medium text-gray-700">
+                                        {currentUser.role === 'arac-sahibi' ? '🚗 Araç Sahibi' : '👨‍✈️ Sürücü'}
+                                    </span>
+                                    <p className="text-xs text-gray-500 mt-1">Rol değiştirilemez</p>
+                                </div>
+                            </div>
+
+                            {error && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">{error}</div>}
+
+                            <div className="flex gap-3 pt-4">
+                                <button type="button" onClick={onClose} className="flex-1 bg-gray-200 text-gray-700 py-3 rounded-lg font-medium hover:bg-gray-300">İptal</button>
+                                <button type="button" onClick={handleSubmit} disabled={loading} className="flex-1 bg-indigo-600 text-white py-3 rounded-lg font-medium hover:bg-indigo-700 disabled:opacity-50">
+                                    {loading ? 'Kaydediliyor...' : '✓ Kaydet'}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // ==================== ABOUT PAGE ====================
+        function AboutPage() {
+            return (
+                <div className="max-w-2xl mx-auto">
+                    <div className="bg-white rounded-lg shadow-md p-6 mb-4">
+                        <div className="w-12 h-12 mx-auto mb-4 text-indigo-600 text-5xl">ℹ️</div>
+                        <h2 className="text-2xl font-bold text-gray-800 mb-4 text-center">Hakkımızda</h2>
+                        <div className="space-y-4 text-gray-700 leading-relaxed text-justify">
+                            <p><strong className="text-indigo-600">Servisteyim</strong>, araç sahipleri ile profesyonel sürücüleri güvenli, hızlı ve verimli şekilde buluşturan yenilikçi bir dijital platformdur. Mobil öncelikli yapısıyla kullanıcı dostu bir deneyim sunan "Servisteyim", sektörün ihtiyaçlarını karşılamak amacıyla tasarlanmış modern bir pazaryeri uygulamasıdır.</p>
+                            <p>Platformumuzda, araç sahipleri güvenilir sürücülere kolayca ulaşabilirken; sürücüler de kendilerine uygun iş ve araç ilanlarına erişim sağlayabilmektedir. Böylece, iki taraf için de karşılıklı faydaya dayalı, şeffaf ve pratik bir ekosistem oluşturulmuştur.</p>
+                            <p>Kuruluş amacımız, şehir içi ve şehirler arası ulaşımda güveni, verimliliği ve erişilebilirliği artırmaktır. Bu doğrultuda, teknolojiyi etkin şekilde kullanarak her kullanıcıya en uygun çözümleri sunmayı hedeflemekteyiz.</p>
+                            <p><strong className="text-indigo-600">Servisteyim</strong>, yenilikçi yaklaşımı, güvenilir altyapısı ve kullanıcı odaklı vizyonu ile sektörde fark yaratmayı amaçlayan bir platformdur.</p>
+                        </div>
+                    </div>
+                    <div className="bg-gradient-to-r from-indigo-600 to-purple-600 rounded-lg shadow-md p-6 text-white text-center">
+                        <h3 className="text-lg font-bold mb-2">📱 Progressive Web App</h3>
+                        <p className="text-sm opacity-90">Servisteyim PWA teknolojisi ile çalışır. Ana ekranınıza ekleyerek uygulama gibi kullanabilirsiniz!</p>
+                    </div>
+                </div>
+            );
+        }
+
+        // ==================== MAIN APP ====================
+        function MainApp({ currentUser, onLogout }) {
+            const [currentTab, setCurrentTab] = useState('ana-akis');
+            const [refreshKey, setRefreshKey] = useState(0);
+            const [editingPost, setEditingPost] = useState(null);
+            const [showProfileModal, setShowProfileModal] = useState(false);
+            const [user, setUser] = useState(currentUser);
+
+            const handlePostCreated = () => {
+                setCurrentTab('ana-akis');
+                setEditingPost(null);
+                setRefreshKey(prev => prev + 1);
+            };
+
+            const handleEditPost = (post) => {
+                setEditingPost(post);
+                setCurrentTab('ilan-ver');
+            };
+
+            const handleCancelEdit = () => {
+                setEditingPost(null);
+                setCurrentTab('ana-akis');
+            };
+
+            const handleProfileUpdate = (updatedUser) => {
+                setUser(updatedUser);
+            };
+
+            return (
+                <div className="min-h-screen bg-gray-50 pb-20">
+                    <header className="bg-indigo-600 text-white p-4 shadow-lg">
+                        <div className="flex justify-between items-center">
+                            <h1 className="text-2xl font-bold">Servisteyim</h1>
+                            <div className="flex items-center gap-3">
+                                <button onClick={() => setShowProfileModal(true)} className="flex items-center gap-3 hover:bg-white/10 rounded-lg p-2 transition-colors">
+                                    {user.profilePhoto ? (
+                                        <img src={user.profilePhoto} alt="Profil" className="w-10 h-10 rounded-full object-cover border-2 border-white" />
+                                    ) : (
+                                        <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center border-2 border-white">
+                                            <span className="text-xl">👤</span>
+                                        </div>
+                                    )}
+                                    <div className="text-right">
+                                        <p className="text-sm font-medium">{user.name} {user.surname}</p>
+                                        <p className="text-xs opacity-75">{user.role === 'arac-sahibi' ? '🚗 Araç Sahibi' : '👨‍✈️ Sürücü'}</p>
+                                    </div>
+                                </button>
+                                <button onClick={onLogout} className="bg-white/20 hover:bg-white/30 px-3 py-1 rounded-lg text-sm font-medium">Çıkış</button>
+                            </div>
+                        </div>
+                    </header>
+
+                    {showProfileModal && (
+                        <ProfileEditModal 
+                            currentUser={user} 
+                            onClose={() => setShowProfileModal(false)} 
+                            onUpdate={handleProfileUpdate}
+                        />
+                    )}
+
+                    <main className="p-4">
+                        {currentTab === 'ana-akis' && (
+                            <div>
+                                <FuelPrices />
+                                <div className="mb-4">
+                                    <h2 className="text-2xl font-bold text-gray-800 mb-4 flex items-center gap-2">
+                                        <HomeIcon />
+                                        Aktif İlanlar
+                                    </h2>
+                                </div>
+                                <JobPostsList key={refreshKey} currentUser={user} onEditPost={handleEditPost} />
+                            </div>
+                        )}
+                        {currentTab === 'ilan-ver' && <JobPostForm currentUser={user} onPostCreated={handlePostCreated} editingPost={editingPost} onCancelEdit={handleCancelEdit} />}
+                        {currentTab === 'hakkinda' && <AboutPage />}
+                    </main>
+
+                    <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 shadow-lg">
+                        <div className="flex justify-around items-center h-16">
+                            <button onClick={() => setCurrentTab('ana-akis')} className={`flex flex-col items-center justify-center flex-1 h-full ${currentTab === 'ana-akis' ? 'text-indigo-600 bg-indigo-50' : 'text-gray-600'}`}>
+                                <HomeIcon />
+                                <span className="text-xs font-medium">Ana Akış</span>
+                            </button>
+                            <button onClick={() => setCurrentTab('ilan-ver')} className={`flex flex-col items-center justify-center flex-1 h-full ${currentTab === 'ilan-ver' ? 'text-indigo-600 bg-indigo-50' : 'text-gray-600'}`}>
+                                <PlusIcon />
+                                <span className="text-xs font-medium">İlan Ver</span>
+                            </button>
+                            <button onClick={() => setCurrentTab('hakkinda')} className={`flex flex-col items-center justify-center flex-1 h-full ${currentTab === 'hakkinda' ? 'text-indigo-600 bg-indigo-50' : 'text-gray-600'}`}>
+                                <InfoIcon />
+                                <span className="text-xs font-medium">Hakkında</span>
+                            </button>
+                        </div>
+                    </nav>
+                </div>
+            );
+        }
+
+        // ==================== ROOT APP ====================
+        function App() {
+            const [dbReady, setDbReady] = useState(false);
+            const [currentUser, setCurrentUser] = useState(null);
+
+            useEffect(() => {
+                db.init().then(() => {
+                    setDbReady(true);
+                    console.log('✅ Servisteyim Database hazır!');
+                }).catch(err => {
+                    console.error('❌ Database başlatılamadı:', err);
+                });
+            }, []);
+
+            if (!dbReady) {
+                return (
+                    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center">
+                        <div className="text-center">
+                            <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-indigo-600 mx-auto mb-4"></div>
+                            <p className="text-gray-600 font-medium">Servisteyim yükleniyor...</p>
+                        </div>
+                    </div>
+                );
+            }
+
+            if (!currentUser) {
+                return <AuthPanel onLogin={setCurrentUser} />;
+            }
+
+            return <MainApp currentUser={currentUser} onLogout={() => setCurrentUser(null)} />;
+        }
+
+        // Render
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
